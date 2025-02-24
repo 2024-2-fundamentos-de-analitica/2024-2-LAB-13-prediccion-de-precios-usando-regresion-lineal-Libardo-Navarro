@@ -1,3 +1,115 @@
+import pandas as pd
+import gzip
+import json
+import pickle
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error,median_absolute_error
+from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.linear_model import LinearRegression
+
+
+path1 = "./files/input/test_data.csv.zip"
+path2 = "./files/input/train_data.csv.zip"
+
+test_data = pd.read_csv(
+	path1,
+	index_col=False,
+	compression='zip'
+)
+
+train_data = pd.read_csv(
+	path2,
+	index_col=False,
+	compression='zip'
+)
+
+current_year = 2021
+
+train_data['Age'] = current_year - train_data['Year']
+test_data['Age'] = current_year - test_data['Year']
+
+columns_to_drop = ['Year', 'Car_Name']
+train_data = train_data.drop(columns=columns_to_drop)
+test_data = test_data.drop(columns=columns_to_drop)
+
+x_train=train_data.drop(columns="Present_Price")
+y_train=train_data["Present_Price"]
+
+x_test=test_data.drop(columns="Present_Price")
+y_test=test_data["Present_Price"]
+
+
+categorical_features = ['Fuel_Type', 'Selling_type', 'Transmission']
+numerical_features = list(set(x_train.columns) - set(categorical_features))
+
+preprocessor = ColumnTransformer(
+	transformers=[
+		("num", MinMaxScaler(), numerical_features),
+		("cat", OneHotEncoder(), categorical_features)
+	],
+	remainder="passthrough"
+)
+
+k_best = SelectKBest(f_regression, k='all')
+
+model = LinearRegression()
+
+pipeline = Pipeline(
+	steps=[
+		("preprocessor", preprocessor),
+		("k_best", k_best),
+		("model", model)
+	]
+)
+
+param_grid = {
+	"k_best__k": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+	"model__fit_intercept": [True, False]
+}
+
+grid_search = GridSearchCV(
+	pipeline,
+	param_grid=param_grid,
+	cv=10,
+	scoring="neg_mean_absolute_error",
+	n_jobs=-1,
+	refit=True,
+	verbose=1
+)
+
+grid_search.fit(x_train, y_train)
+
+with gzip.open("./files/models/model.pkl.gz", 'wb') as f:
+	pickle.dump(grid_search, f)
+	
+metrics = {}
+
+y_train_pred = grid_search.predict(x_train)
+y_test_pred = grid_search.predict(x_test)
+
+metrics['train'] = {
+    'type': 'metrics',
+    'dataset': 'train',
+    'r2': r2_score(y_train, y_train_pred),
+    'mse': mean_squared_error(y_train, y_train_pred),
+    'mad': median_absolute_error(y_train, y_train_pred),
+}
+
+metrics['test'] = {
+    'type': 'metrics',
+    'dataset': 'test',
+    'r2': r2_score(y_test, y_test_pred),
+    'mse': mean_squared_error(y_test, y_test_pred),
+    'mad': median_absolute_error(y_test, y_test_pred),
+}
+
+
+with open("./files/output/metrics.json", 'w') as f:
+	f.write(json.dumps(metrics['train'])+'\n')
+	f.write(json.dumps(metrics['test'])+'\n')
 #
 # En este dataset se desea pronosticar el precio de vhiculos usados. El dataset
 # original contiene las siguientes columnas:
